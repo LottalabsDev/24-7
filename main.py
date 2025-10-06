@@ -1,24 +1,15 @@
 import subprocess
 import time
-import datetime
 import os
+import datetime
 import signal
 import sys
 
-# ==== CONFIGURATION ====
-# Replace this with the command to start your IDX workspace or process
-COMMAND = "bash start-workspace.sh"  # Example startup command
-LOG_FILE = "workspace_log.txt"
+# ===== CONFIGURATION =====
+TUNNEL_NAME = "mytunnel"  # change this to your tunnel name
+LOG_FILE = "tunnel_log.txt"
+REFRESH_INTERVAL = 60  # restart every 1 minute
 
-# ==== SIGNAL HANDLING ====
-def handle_signal(signum, frame):
-    log(f"Ignoring signal {signum} — keeping the process alive.")
-
-# Ignore typical termination signals
-for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP, signal.SIGQUIT):
-    signal.signal(sig, handle_signal)
-
-# ==== LOGGING ====
 def log(msg):
     now = datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
     line = f"[{now}] {msg}"
@@ -26,34 +17,54 @@ def log(msg):
     with open(LOG_FILE, "a") as f:
         f.write(line + "\n")
 
-# ==== MAIN LOOP ====
+def handle_signal(signum, frame):
+    log(f"Ignoring signal {signum} — keeping the tunnel alive.")
+
+for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP, signal.SIGQUIT):
+    signal.signal(sig, handle_signal)
+
 def run_forever():
-    log("=== HyzexNodes 24/7 IDX Workspace Keeper Started ===")
+    log("=== Cloudflare Tunnel Auto-Keeper Started ===")
     while True:
         try:
-            log(f"Starting process: {COMMAND}")
+            cmd = f"cloudflared tunnel run {TUNNEL_NAME}"
+            log(f"Starting: {cmd}")
             process = subprocess.Popen(
-                COMMAND, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT
+                cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT
             )
 
-            # Continuously read and log output
-            for line in iter(process.stdout.readline, b""):
+            start_time = time.time()
+            while True:
+                line = process.stdout.readline()
+                if not line:
+                    break
                 decoded = line.decode(errors="ignore").strip()
                 if decoded:
-                    log(f"[PROCESS] {decoded}")
+                    log(f"[TUNNEL] {decoded}")
 
-            process.wait()
-            code = process.returncode
-            log(f"Process exited with code {code}. Restarting in 5 seconds...")
-            time.sleep(5)
+                # restart every 1 minute
+                if time.time() - start_time >= REFRESH_INTERVAL:
+                    log("Refreshing Cloudflare Tunnel...")
+                    process.terminate()
+                    process.wait(timeout=10)
+                    break
 
+            time.sleep(3)
         except Exception as e:
             log(f"[ERROR] {e}")
             time.sleep(5)
-            continue
+
+def ensure_background():
+    """Re-run this script in background using nohup if not already detached."""
+    if "NOHUP_MODE" not in os.environ:
+        log("Launching background process using nohup...")
+        cmd = f"nohup python3 {sys.argv[0]} > output.log 2>&1 & disown"
+        subprocess.call(cmd, shell=True)
+        log("Background process started successfully.")
+        sys.exit(0)
 
 if __name__ == "__main__":
-    # Ensure log file exists
     if not os.path.exists(LOG_FILE):
         open(LOG_FILE, "w").close()
+    ensure_background()
     run_forever()
