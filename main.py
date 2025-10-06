@@ -6,9 +6,9 @@ import signal
 import sys
 
 # ===== CONFIGURATION =====
-TUNNEL_NAME = "mytunnel"   # change this to your Cloudflare tunnel name
+TUNNEL_NAME = "mytunnel"  # change this to your tunnel name
 LOG_FILE = "tunnel_log.txt"
-REFRESH_INTERVAL = 60      # restart every 1 minute
+REFRESH_INTERVAL = 60  # restart every 1 minute
 
 def log(msg):
     now = datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
@@ -23,31 +23,7 @@ def handle_signal(signum, frame):
 for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP, signal.SIGQUIT):
     signal.signal(sig, handle_signal)
 
-def run_command(cmd):
-    """Run shell command and stream output to log."""
-    log(f"Running command: {cmd}")
-    process = subprocess.Popen(
-        cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT
-    )
-    for line in iter(process.stdout.readline, b""):
-        decoded = line.decode(errors="ignore").strip()
-        if decoded:
-            log(decoded)
-    process.wait()
-    return process.returncode
-
-def start_sshx():
-    """Start SSHX.IO session first."""
-    log("=== Starting SSHX.IO Session ===")
-    try:
-        cmd = "curl -sSf https://sshx.io/get | sh -s run"
-        run_command(cmd)
-        log("SSHX.IO session started successfully.")
-    except Exception as e:
-        log(f"[SSHX ERROR] {e}")
-
 def run_forever():
-    """Main loop to keep Cloudflare tunnel alive."""
     log("=== Cloudflare Tunnel Auto-Keeper Started ===")
     while True:
         try:
@@ -78,34 +54,19 @@ def run_forever():
             log(f"[ERROR] {e}")
             time.sleep(5)
 
-def start_background():
-    """Launch script in background using nohup."""
-    log("Launching background process using nohup...")
-    cmd = f"nohup python3 {sys.argv[0]} --auto > output.log 2>&1 &"
-    subprocess.call(cmd, shell=True)
-    log("Background process started successfully.")
+def ensure_background():
+    """Re-run this script in background using nohup (portable version)."""
+    if "NOHUP_MODE" not in os.environ:
+        log("Launching background process using nohup (portable mode)...")
+        env = os.environ.copy()
+        env["NOHUP_MODE"] = "1"
+        cmd = f"nohup python3 {sys.argv[0]} > output.log 2>&1 &"
+        subprocess.call(cmd, shell=True, env=env)
+        log("Background process started successfully.")
+        sys.exit(0)
 
 if __name__ == "__main__":
     if not os.path.exists(LOG_FILE):
         open(LOG_FILE, "w").close()
-
-    # If started in auto mode (background)
-    if "--auto" in sys.argv:
-        run_forever()
-        sys.exit(0)
-
-    # Step 1: Start SSHX first
-    start_sshx()
-
-    # Step 2: Ask user before 24/7 mode
-    print()
-    choice = input("Do you want to keep this workspace running 24/7? (y/n): ").strip().lower()
-
-    if choice == "y":
-        log("User chose YES — starting 24/7 mode.")
-        start_background()
-        print("\n✅ Running 24/7 in background! Check logs with:")
-        print("   tail -f tunnel_log.txt\n")
-    else:
-        log("User chose NO — exiting.")
-        print("Exited. Workspace will not run 24/7.")
+    ensure_background()
+    run_forever()
